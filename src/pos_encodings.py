@@ -56,10 +56,11 @@ class PositionalEmbedding(nn.Module):
         super().__init__()
         self.embed = nn.Embedding(50, d_model)
         self.n_controlpoints = n_controlpoints
+        self.pos = torch.linspace(0, 1, n_controlpoints).repeat(d_model, 1).T
 
     def forward(self, x):
         b, hw, c = x.size()
 
         i = torch.arange(self.n_controlpoints, device=x.device)
-        tgt = self.embed(i).repeat(b, 1, 1)
+        tgt = (self.embed(i) + self.pos.to(x.device)).repeat(b, 1, 1)
         return tgt

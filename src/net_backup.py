@@ -17,19 +17,13 @@ class Net(nn.Module):
                  num_encoder_layers=6,
                  num_decoder_layers=6,
                  dim_feedforward=2048,
-                 dropout=0.1,
-                 n_controlpoints=4,
-                 n_splines=1,
-                 n_eval_points=100,
-                 batch_size=1):
+                 dropout=0.1, n_controlpoints=4, batch_size=1):
 
         super().__init__()
         if channels is None:
             channels = [1, 64, 128, 256]
 
         self.n_controlpoints = n_controlpoints
-        self.n_splines = n_splines
-        self.n_eval_points = n_eval_points
 
         # CNN
         self.cnn = nn.Sequential(
@@ -46,7 +40,7 @@ class Net(nn.Module):
         self.pos_encoder = PositionalEncoding(batch_size, 32, 32,
                                               feat_dim=channels[-1]/2, normalize=True, device='cuda')
 
-        self.pos_embeder = PositionalEmbedding(n_splines, d_model=channels[-1])
+        self.pos_embeder = PositionalEmbedding(n_controlpoints, d_model=channels[-1])
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(d_model=channels[-1], nhead=nhead, dim_feedforward=dim_feedforward,
@@ -60,14 +54,21 @@ class Net(nn.Module):
 
         # Encoder after transformer
         self.feature_encoder = nn.Sequential(
-            nn.Linear(channels[-1], (channels[-1]+n_controlpoints*2)//2),
+            nn.Linear(channels[-1], channels[-1]//2),
             nn.ReLU(),
-            nn.Linear((channels[-1]+n_controlpoints*2)//2, n_controlpoints*2)
+            # nn.Dropout(p=dropout),
+            nn.Linear(channels[-1]//2, 2)
         )
 
         # NURBSDiff curve evaluation module.
-        self.curve_weights = torch.ones(n_splines, self.n_controlpoints, 1).cuda()
-        self.curve_layer = CurveEval(n_controlpoints, dimension=2, p=3, out_dim=n_eval_points)
+        self.curve_layer = CurveEval(n_controlpoints, dimension=2, p=3, out_dim=100)
+
+        # self._reset_parameters(self.feature_encoder)
+
+    def _reset_parameters(self, module):
+        for p in module.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_normal_(p)
 
     def forward(self, x):
         # print('x_size: ', x.size())
@@ -90,17 +91,15 @@ class Net(nn.Module):
         control_points = self.feature_encoder(transformer_out)
         # print('control_points_size: ', control_points.size())
 
-        out_list = []
-        cp_list = []
-        for cp in control_points:
-            cp = cp.reshape(self.n_splines, self.n_controlpoints, 2)
-            cp_list.append(cp)
-            cp = torch.cat((cp, self.curve_weights), axis=-1)
-            out = self.curve_layer(cp).reshape(self.n_splines * self.n_eval_points, 2)
-            out_list.append(out)
+        # control_points = control_points[0].reshape(2, self.n_controlpoints, 2)
+        # print('reshapes_control_points_size: ', control_points.size())
 
-        control_points = torch.stack(cp_list, dim=0)
-        out = torch.stack(out_list, dim=0)
+        # NURBS weights all set to 1 (which makes it a standard b-spline).
+        self.curve_weights = torch.ones(1, self.n_controlpoints, 1).cuda()
+        control_points = torch.cat((control_points, self.curve_weights), axis=-1)
+
+        # Get point cloud from control points.
+        out = self.curve_layer(control_points).reshape(1, 100, 2)
         # print('out_size: ', out.size())
 
         return out, control_points
@@ -121,14 +120,13 @@ if __name__ == "__main__":
               dim_feedforward=2048,
               dropout=0.2,
               n_controlpoints=4,
-              n_splines=2,
               batch_size=1)
     net.cuda()
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.90)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.8)
 
-    pbar = tqdm(range(10001))
+    pbar = tqdm(range(101))
     pc_losses = []
     cp_losses = []
     total_losses = []
@@ -136,7 +134,7 @@ if __name__ == "__main__":
     for i in pbar:
         optimizer.zero_grad()
 
-        im, target = dataloader['two_curves']
+        im, target = dataloader['one_curve']
         im = im.cuda()
         target = target.cuda()
 
@@ -157,7 +155,7 @@ if __name__ == "__main__":
         pc_losses.append(loss.item())
 
         # Create plot every n training steps.
-        if i % 1000 == 0:
+        if i % 10 == 0:
             # print("Out")
             # print(out)
             # print("Target")
@@ -172,14 +170,16 @@ if __name__ == "__main__":
             target = target.cpu()
             im = im.cpu()
 
+            print('---')
+            print(control_points)
+
             plt.figure()
             plt.imshow(im[0][0], extent=[0, 1, 1, 0], cmap='gray')
             plt.scatter(target[0, :, 1], target[0, :, 0], color='green')
             plt.scatter(out[0, :, 1], out[0, :, 0], color='blue')
 
-            for j in range(len(control_points[0])):
-                plt.scatter(control_points[0, j, :, 1], control_points[0, j, :, 0])
-
+            for cp in control_points:
+                plt.scatter(cp[:, 1], cp[:, 0])
             plt.savefig(f'./outputImages/predicted_spline_{i}.png')
             plt.close()
 

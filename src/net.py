@@ -4,11 +4,12 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 from torchvision import transforms
 from NURBSDiff.curve_eval import CurveEval
-from pytorch3d.loss import chamfer_distance
 from cnn import Bottleneck, BasicBlock
 from dataloaders import MNISTDataset, CustomDataset
 from custom_transforms import im2pc, MyRotationTransform
 from pos_encodings import PositionalEmbedding, PositionalEncoding
+from loss import pointcloud_loss
+import random
 
 
 class Net(nn.Module):
@@ -96,12 +97,11 @@ class Net(nn.Module):
             cp = cp.reshape(self.n_splines, self.n_controlpoints, 2)
             cp_list.append(cp)
             cp = torch.cat((cp, self.curve_weights), axis=-1)
-            out = self.curve_layer(cp).reshape(self.n_splines * self.n_eval_points, 2)
+            out = self.curve_layer(cp)
             out_list.append(out)
 
         control_points = torch.stack(cp_list, dim=0)
         out = torch.stack(out_list, dim=0)
-        # print('out_size: ', out.size())
 
         return out, control_points
 
@@ -119,16 +119,16 @@ if __name__ == "__main__":
               num_encoder_layers=6,
               num_decoder_layers=6,
               dim_feedforward=2048,
-              dropout=0.2,
+              dropout=0,
               n_controlpoints=4,
-              n_splines=2,
+              n_splines=1,
               batch_size=1)
     net.cuda()
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.90)
 
-    pbar = tqdm(range(10001))
+    pbar = tqdm(range(1001))
     pc_losses = []
     cp_losses = []
     total_losses = []
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     for i in pbar:
         optimizer.zero_grad()
 
-        im, target = dataloader['two_curves']
+        im, target = dataloader[f'random_one_curve_{random.randint(0, 99)}']
         im = im.cuda()
         target = target.cuda()
 
@@ -146,10 +146,12 @@ if __name__ == "__main__":
         out, control_points = net(im)
 
         # print('out_size: ', out.size())
+        # print('control_points_out_size: ', control_points.size())
 
-        loss, _ = chamfer_distance(out, target, point_reduction='mean')
+        loss, reg_loss = pointcloud_loss(out, target)
 
-        loss.backward()
+        total_loss = loss + 0.001 * reg_loss
+        total_loss.backward()
 
         optimizer.step()
         scheduler.step()
@@ -157,11 +159,9 @@ if __name__ == "__main__":
         pc_losses.append(loss.item())
 
         # Create plot every n training steps.
-        if i % 1000 == 0:
-            # print("Out")
-            # print(out)
-            # print("Target")
-            # print(target)
+        if i % 100 == 0:
+            print('loss: ', loss)
+            print('reg_loss: ', reg_loss)
 
             net.eval()
 
@@ -175,9 +175,9 @@ if __name__ == "__main__":
             plt.figure()
             plt.imshow(im[0][0], extent=[0, 1, 1, 0], cmap='gray')
             plt.scatter(target[0, :, 1], target[0, :, 0], color='green')
-            plt.scatter(out[0, :, 1], out[0, :, 0], color='blue')
 
             for j in range(len(control_points[0])):
+                plt.scatter(out[0, j, :, 1], out[0, j, :, 0], color='blue')
                 plt.scatter(control_points[0, j, :, 1], control_points[0, j, :, 0])
 
             plt.savefig(f'./outputImages/predicted_spline_{i}.png')

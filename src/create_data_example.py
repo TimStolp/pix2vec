@@ -2,6 +2,7 @@ from NURBSDiff.curve_eval import CurveEval
 import matplotlib.pyplot as plt
 import torch
 from PIL import Image
+import random
 
 # one line
 # name = 'one_line'
@@ -11,7 +12,7 @@ from PIL import Image
 #                   [120, 80]]]
 
 # one curve
-# name = 'one_curve'
+# name = 'one_curve_1'
 # control_points = [[[10,   120],
 #                   [10,   65],
 #                   [120,  65],
@@ -42,44 +43,45 @@ from PIL import Image
 #                    [26, 18]]]
 
 # two curves
-name = 'two_curves'
-control_points = [[[64,   22],
-                  [64,   64],
-                  [110,  64],
-                  [110, 34]],
-                  [[24, 35],
-                   [24, 100],
-                   [120, 68],
-                   [120, 120]]]
+# name = 'two_curves'
+# control_points = [[[64,   22],
+#                   [64,   64],
+#                   [110,  64],
+#                   [110, 34]],
+#                   [[24, 35],
+#                    [24, 100],
+#                    [120, 68],
+#                    [120, 120]]]
 
-control_points = torch.Tensor(control_points).cuda()
-curve_weights = torch.ones(control_points.size()[0], 4, 1).cuda()
+for i in range(100):
+    name = f'random_one_curve_{i}'
+    control_points = [[[random.randint(1, 125),   random.randint(1, 125)],
+                      [random.randint(1, 125),   random.randint(1, 125)],
+                      [random.randint(1, 125),  random.randint(1, 125)],
+                      [random.randint(1, 125), random.randint(1, 125)]]]
 
-control_points = torch.cat((control_points, curve_weights), axis=-1)
+    control_points = torch.Tensor(control_points).cuda()
+    curve_weights = torch.ones(control_points.size()[0], 4, 1).cuda()
 
-print(control_points)
-print(control_points.size())
+    control_points = torch.cat((control_points, curve_weights), axis=-1)
 
-curve_layer = CurveEval(4, dimension=2, p=3, out_dim=250)
+    curve_layer = CurveEval(4, dimension=2, p=3, out_dim=250)
 
-pc = curve_layer(control_points).detach().cpu()
-control_points = control_points.cpu()
+    pc = curve_layer(control_points).detach().cpu()
+    control_points = control_points.cpu()
 
-print(pc)
-print(pc.size())
+    im = torch.zeros((128, 128), dtype=torch.uint8)
 
-im = torch.zeros((128, 128), dtype=torch.uint8)
+    pixels = pc.round().int()
+    for p in pixels:
+        for y, x in p:
+            im[y, x] = 255
+    print(pixels)
 
-pixels = pc.round().int()
-for p in pixels:
-    for y, x in p:
-        im[y, x] = 255
-print(pixels)
+    # plt.imshow(im)
+    # plt.show()
 
-plt.imshow(im)
-plt.show()
-
-im = Image.fromarray(im.numpy())
-im.save(f'./custom_data/{name}.png')
-torch.save(control_points, f'./custom_data/{name}_control_points.pt')
-torch.save(pc, f'./custom_data/{name}_point_cloud.pt')
+    im = Image.fromarray(im.numpy())
+    im.save(f'./custom_data/{name}.png')
+    torch.save(control_points, f'./custom_data/{name}_control_points.pt')
+    torch.save(pc, f'./custom_data/{name}_point_cloud.pt')

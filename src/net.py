@@ -8,7 +8,7 @@ from cnn import Bottleneck, BasicBlock
 from dataloaders import MNISTDataset, CustomDataset
 from custom_transforms import im2pc, MyRotationTransform
 from pos_encodings import PositionalEmbedding, PositionalEncoding
-from loss import pointcloud_loss
+from loss import pointcloud_loss, VectorizationLoss
 import random
 
 
@@ -127,16 +127,16 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.90)
+    loss_func = VectorizationLoss()
 
-    pbar = tqdm(range(1001))
-    pc_losses = []
-    cp_losses = []
-    total_losses = []
+    pbar = tqdm(range(10001))
+    losses = []
 
     for i in pbar:
         optimizer.zero_grad()
 
         im, target = dataloader[f'random_one_curve_{random.randint(0, 99)}']
+        # im, target = dataloader['one_curve_2']
         im = im.cuda()
         target = target.cuda()
 
@@ -148,21 +148,17 @@ if __name__ == "__main__":
         # print('out_size: ', out.size())
         # print('control_points_out_size: ', control_points.size())
 
-        loss, reg_loss = pointcloud_loss(out, target)
+        loss = loss_func(out, target, control_points)
 
-        total_loss = loss + 0.001 * reg_loss
-        total_loss.backward()
+        loss.backward()
 
         optimizer.step()
         scheduler.step()
 
-        pc_losses.append(loss.item())
+        losses.append(loss.item())
 
         # Create plot every n training steps.
-        if i % 100 == 0:
-            print('loss: ', loss)
-            print('reg_loss: ', reg_loss)
-
+        if i % 1000 == 0:
             net.eval()
 
             out, control_points = net(im)
@@ -174,7 +170,7 @@ if __name__ == "__main__":
 
             plt.figure()
             plt.imshow(im[0][0], extent=[0, 1, 1, 0], cmap='gray')
-            plt.scatter(target[0, :, 1], target[0, :, 0], color='green')
+            # plt.scatter(target[0, :, 1], target[0, :, 0], color='green')
 
             for j in range(len(control_points[0])):
                 plt.scatter(out[0, j, :, 1], out[0, j, :, 0], color='blue')
@@ -186,7 +182,7 @@ if __name__ == "__main__":
             net.train()
 
     plt.figure()
-    plt.plot(pc_losses)
-    plt.savefig('./outputImages/training_pointcloud_loss.png')
+    plt.plot(losses)
+    plt.savefig('./outputImages/training_loss.png')
     plt.show()
     plt.close()

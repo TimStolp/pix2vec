@@ -28,7 +28,7 @@ class PositionalEncoding(nn.Module):
         # print("normalized x_meshgrid:", x_embed[0])
 
         dim_t = torch.arange(feat_dim, device=device)
-        dim_t = temperature ** (2 * (dim_t // 2) / feat_dim)
+        dim_t = temperature ** (2 * torch.div(dim_t, 2, rounding_mode='floor') / feat_dim)
 
         # print("dim_t:", dim_t)
 
@@ -48,7 +48,7 @@ class PositionalEncoding(nn.Module):
         # print("pos size:", self.pos.size())
 
     def forward(self, x):
-        return x + self.pos
+        return x + self.pos[0:x.size(0)]
 
 
 class PositionalEmbedding(nn.Module):

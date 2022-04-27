@@ -53,22 +53,21 @@ import random
 #                    [120, 68],
 #                    [120, 120]]]
 
-for i in range(100):
+for i in range(1000):
     name = f'random_one_curve_{i}'
     control_points = [[[random.randint(1, 125),   random.randint(1, 125)],
                       [random.randint(1, 125),   random.randint(1, 125)],
                       [random.randint(1, 125),  random.randint(1, 125)],
                       [random.randint(1, 125), random.randint(1, 125)]]]
 
-    control_points = torch.Tensor(control_points).cuda()
-    curve_weights = torch.ones(control_points.size()[0], 4, 1).cuda()
+    control_points = torch.Tensor(control_points)
+    curve_weights = torch.ones(control_points.size(0), 4, 1)
 
     control_points = torch.cat((control_points, curve_weights), axis=-1)
 
-    curve_layer = CurveEval(4, dimension=2, p=3, out_dim=250)
+    curve_layer = CurveEval(4, dimension=2, p=3, out_dim=250, dvc='cpu')
 
-    pc = curve_layer(control_points).detach().cpu()
-    control_points = control_points.cpu()
+    pc = curve_layer(control_points).detach()
 
     im = torch.zeros((128, 128), dtype=torch.uint8)
 
@@ -76,7 +75,6 @@ for i in range(100):
     for p in pixels:
         for y, x in p:
             im[y, x] = 255
-    print(pixels)
 
     # plt.imshow(im)
     # plt.show()

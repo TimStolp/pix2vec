@@ -1,15 +1,20 @@
 from tqdm import tqdm
+from numpy import frombuffer
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from torchvision import transforms
+from torchvision.utils import make_grid
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from NURBSDiff.curve_eval import CurveEval
 from cnn import Bottleneck, BasicBlock
 from dataloaders import MNISTDataset, CustomDataset
-from custom_transforms import im2pc, MyRotationTransform
+from custom_transforms import im2pc
 from pos_encodings import PositionalEmbedding, PositionalEncoding
-from loss import pointcloud_loss, VectorizationLoss
-import random
+from loss import VectorizationLoss
+import warnings
+warnings.filterwarnings("error")
 
 
 class Net(nn.Module):
@@ -18,7 +23,7 @@ class Net(nn.Module):
                  num_encoder_layers=6,
                  num_decoder_layers=6,
                  dim_feedforward=2048,
-                 dropout=0.1,
+                 dropout=0,
                  n_controlpoints=4,
                  n_splines=1,
                  n_eval_points=100,
@@ -45,7 +50,7 @@ class Net(nn.Module):
 
         # Positional encoding
         self.pos_encoder = PositionalEncoding(batch_size, 32, 32,
-                                              feat_dim=channels[-1]/2, normalize=True, device='cuda')
+                                              feat_dim=channels[-1] / 2, normalize=True, device='cuda')
 
         self.pos_embeder = PositionalEmbedding(n_splines, d_model=channels[-1])
 
@@ -61,9 +66,9 @@ class Net(nn.Module):
 
         # Encoder after transformer
         self.feature_encoder = nn.Sequential(
-            nn.Linear(channels[-1], (channels[-1]+n_controlpoints*2)//2),
+            nn.Linear(channels[-1], (channels[-1] + n_controlpoints * 2) // 2),
             nn.ReLU(),
-            nn.Linear((channels[-1]+n_controlpoints*2)//2, n_controlpoints*2)
+            nn.Linear((channels[-1] + n_controlpoints * 2) // 2, n_controlpoints * 2)
         )
 
         # NURBSDiff curve evaluation module.
@@ -106,83 +111,145 @@ class Net(nn.Module):
         return out, control_points
 
 
-if __name__ == "__main__":
+def val_loop(nett, valloaderr):
+    total_val_losss = 0
+    with torch.no_grad():
+        for val_im, val_target in valloaderr:
+            val_im = val_im.cuda()
+            val_target = val_target.cuda()
 
+            val_out, val_control_points = nett(val_im)
+
+            val_loss = loss_func(val_out, val_target, val_control_points)
+
+            total_val_losss += val_loss.item()
+
+    return total_val_losss
+
+
+def plot_output_to_images(test_im, test_target, test_out, test_control_points):
+    plots = []
+    for b in range(len(test_im)):
+        fig = plt.figure(figsize=(5, 5))
+        plt.imshow(test_im[b][0], extent=[0, 1, 1, 0], cmap='gray')
+        plt.scatter(test_target[b, :, 1], test_target[b, :, 0], color='green')
+        for j in range(len(test_control_points[0])):
+            plt.scatter(test_out[b, j, :, 1], test_out[b, j, :, 0], color='blue')
+            plt.scatter(test_control_points[b, j, :, 1], test_control_points[b, j, :, 0], color='red')
+
+        plt.axis('off')
+        plt.tight_layout(pad=0)
+        fig.canvas.draw()
+
+        plot = frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+        plot = plot.reshape(fig.canvas.get_width_height()[::-1] + (3,)).transpose(2, 0, 1).copy()
+        plots.append(torch.from_numpy(plot))
+        plt.close()
+    return plots
+
+
+if __name__ == "__main__":
+    batch_size = 25
+    data_len = 1000
+    n_controlpoints = 6
+    n_splines = 1
+    epochs = 1000
+    lr = 1e-4
     transform = transforms.Compose([transforms.ToTensor(),
-                                    # MyRotationTransform(angle=90),
                                     transforms.Normalize(0.5, 0.5)])
 
+    # Create dataloader.
     # dataloader = MNISTDataset('../../datasets_external/mnist', transform=transform, target_transform=im2pc)
-    dataloader = CustomDataset('./custom_data', true_targets=True, transform=transform, target_transform=im2pc)
+    dataset = CustomDataset('./custom_data/random_one_curve_', data_len=data_len, true_targets=True,
+                            transform=transform, target_transform=im2pc)
+    train_set, val_set, test_set = torch.utils.data.random_split(dataset, [int(data_len * 0.85), int(data_len * 0.10),
+                                                                           int(data_len * 0.05)])
+    trainloader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+    valloader = DataLoader(val_set, batch_size=batch_size)
+    testloader = DataLoader(test_set, batch_size=batch_size)
+
+    # Create network.
     net = Net(channels=None,
               nhead=8,
               num_encoder_layers=6,
               num_decoder_layers=6,
               dim_feedforward=2048,
               dropout=0,
-              n_controlpoints=4,
-              n_splines=1,
-              batch_size=1)
+              n_controlpoints=n_controlpoints,
+              n_splines=n_splines,
+              n_eval_points=100,
+              batch_size=batch_size)
     net.cuda()
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.90)
-    loss_func = VectorizationLoss()
+    # Create logger.
+    writer = SummaryWriter('runs/custom_data_vectorization')
 
-    pbar = tqdm(range(10001))
-    losses = []
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.995)
+    loss_func = VectorizationLoss(loss="sinkhorn", p=2, blur=0.01)
 
-    for i in pbar:
-        optimizer.zero_grad()
+    i = 0
+    running_loss = 0
+    for epoch in tqdm(range(epochs)):
+        for im, target in trainloader:
+            im = im.cuda()
+            target = target.cuda()
 
-        im, target = dataloader[f'random_one_curve_{random.randint(0, 99)}']
-        # im, target = dataloader['one_curve_2']
-        im = im.cuda()
-        target = target.cuda()
-
-        # print('im_size: ', im.size())
-        # print('target_size: ', target.size())
-
-        out, control_points = net(im)
-
-        # print('out_size: ', out.size())
-        # print('control_points_out_size: ', control_points.size())
-
-        loss = loss_func(out, target, control_points)
-
-        loss.backward()
-
-        optimizer.step()
-        scheduler.step()
-
-        losses.append(loss.item())
-
-        # Create plot every n training steps.
-        if i % 1000 == 0:
-            net.eval()
+            # print('im_size: ', im.size())
+            # print('target_size: ', target.size())
 
             out, control_points = net(im)
 
-            out = out.cpu().detach()
-            control_points = control_points.cpu().detach()
-            target = target.cpu()
-            im = im.cpu()
+            # print('out_size: ', out.size())
+            # print('control_points_out_size: ', control_points.size())
 
-            plt.figure()
-            plt.imshow(im[0][0], extent=[0, 1, 1, 0], cmap='gray')
-            # plt.scatter(target[0, :, 1], target[0, :, 0], color='green')
+            loss = loss_func(out, target, control_points)
 
-            for j in range(len(control_points[0])):
-                plt.scatter(out[0, j, :, 1], out[0, j, :, 0], color='blue')
-                plt.scatter(control_points[0, j, :, 1], control_points[0, j, :, 0])
+            optimizer.zero_grad()
 
-            plt.savefig(f'./outputImages/predicted_spline_{i}.png')
-            plt.close()
+            loss.backward()
 
-            net.train()
+            optimizer.step()
+            scheduler.step()
 
-    plt.figure()
-    plt.plot(losses)
-    plt.savefig('./outputImages/training_loss.png')
-    plt.show()
-    plt.close()
+            running_loss += loss.item()
+
+            # Create plot every n training steps.
+            if i % 10 == 9:
+                writer.add_scalar('training_loss', running_loss / 10, i)
+                running_loss = 0
+
+            if i % 100 == 99:
+                net.eval()
+                total_val_loss = val_loop(net, valloader)
+                writer.add_scalar('validation_loss', total_val_loss / len(valloader), i)
+                net.train()
+            i += 1
+
+        if epoch % 10 == 9:
+            with torch.no_grad():
+                net.eval()
+                test_plots = []
+                for batch, (test_im, test_target) in enumerate(testloader):
+                    test_im = test_im.cuda()
+                    test_target = test_target.cuda()
+
+                    test_out, test_control_points = net(test_im)
+
+                    test_out = test_out.cpu()
+                    test_control_points = test_control_points.cpu()
+                    test_im = test_im.cpu()
+                    test_target = test_target.cpu()
+
+                    test_plot = plot_output_to_images(test_im, test_target, test_out, test_control_points)
+                    test_plots += test_plot
+
+                test_grid = make_grid(test_plots, nrow=int(len(test_plots)**0.5))
+                writer.add_image('test_images', test_grid, epoch+1)
+
+                train_plots = plot_output_to_images(im.cpu(), target.cpu(), out.detach().cpu(),
+                                                    control_points.detach().cpu())
+                train_grid = make_grid(train_plots, nrow=int(len(train_plots)**0.5))
+                writer.add_image('train_images', train_grid, epoch+1)
+
+                net.train()

@@ -1,5 +1,5 @@
 import torch
-from torchvision import transforms
+
 
 # Image to point cloud by threshold.
 def im2pc(image):
@@ -13,14 +13,4 @@ def im2pc(image):
     point_cloud = torch.Tensor(pc)
     point_cloud[:, 0] = (point_cloud[:, 0] / x_len)
     point_cloud[:, 1] = (point_cloud[:, 1] / y_len)
-    return point_cloud.unsqueeze(0)
-
-
-class MyRotationTransform:
-    """Rotate by one of the given angles."""
-
-    def __init__(self, angle):
-        self.angle = angle
-
-    def __call__(self, x):
-        return transforms.functional.rotate(x, self.angle)
+    return point_cloud

@@ -132,8 +132,8 @@ def plot_output_to_images(test_im, test_target, test_out, test_control_points):
     for b in range(len(test_im)):
         fig = plt.figure(figsize=(5, 5))
         plt.imshow(test_im[b][0], extent=[0, 1, 1, 0], cmap='gray')
-        plt.scatter(test_target[b, :, 1], test_target[b, :, 0], color='green')
         for j in range(len(test_control_points[0])):
+            plt.scatter(test_target[b, j, :, 1], test_target[b, j, :, 0], color='green')
             plt.scatter(test_out[b, j, :, 1], test_out[b, j, :, 0], color='blue')
             plt.scatter(test_control_points[b, j, :, 1], test_control_points[b, j, :, 0], color='red')
 
@@ -149,18 +149,21 @@ def plot_output_to_images(test_im, test_target, test_out, test_control_points):
 
 
 if __name__ == "__main__":
-    batch_size = 25
+    batch_size = 32
     data_len = 1000
-    n_controlpoints = 6
-    n_splines = 1
-    epochs = 1000
+    n_controlpoints = 4
+    n_splines = 2
+    epochs = 100
     lr = 1e-4
+    optim_step_size = 1000
+    optim_gamma = 0.995
+    loss_type = "sinkhorn"
     transform = transforms.Compose([transforms.ToTensor(),
                                     transforms.Normalize(0.5, 0.5)])
 
     # Create dataloader.
     # dataloader = MNISTDataset('../../datasets_external/mnist', transform=transform, target_transform=im2pc)
-    dataset = CustomDataset('./custom_data/random_one_curve_', data_len=data_len, true_targets=True,
+    dataset = CustomDataset('./custom_data/random_two_curves_', data_len=data_len, true_targets=True,
                             transform=transform, target_transform=im2pc)
     train_set, val_set, test_set = torch.utils.data.random_split(dataset, [int(data_len * 0.85), int(data_len * 0.10),
                                                                            int(data_len * 0.05)])
@@ -185,8 +188,8 @@ if __name__ == "__main__":
     writer = SummaryWriter('runs/custom_data_vectorization')
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.995)
-    loss_func = VectorizationLoss(loss="sinkhorn", p=2, blur=0.01)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=optim_step_size, gamma=optim_gamma)
+    loss_func = VectorizationLoss(loss=loss_type)
 
     i = 0
     running_loss = 0

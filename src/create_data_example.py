@@ -54,23 +54,37 @@ import random
 #                    [120, 120]]]
 
 for i in range(1000):
-    name = f'random_one_curve_{i}'
-    control_points = [[[random.randint(1, 125),   random.randint(1, 125)],
-                      [random.randint(1, 125),   random.randint(1, 125)],
-                      [random.randint(1, 125),  random.randint(1, 125)],
-                      [random.randint(1, 125), random.randint(1, 125)]]]
+    # name = f'random_one_curve_{i}'
+    # control_points = [[[random.randint(1, 125),   random.randint(1, 125)],
+    #                   [random.randint(1, 125),   random.randint(1, 125)],
+    #                   [random.randint(1, 125),  random.randint(1, 125)],
+    #                   [random.randint(1, 125), random.randint(1, 125)]]]
+
+    name = f'random_two_curves_{i}'
+    control_points = [[[random.randint(1, 125), random.randint(1, 125)],
+                       [random.randint(1, 125), random.randint(1, 125)],
+                       [random.randint(1, 125), random.randint(1, 125)],
+                       [random.randint(1, 125), random.randint(1, 125)]],
+                      [[random.randint(1, 125), random.randint(1, 125)],
+                       [random.randint(1, 125), random.randint(1, 125)],
+                       [random.randint(1, 125), random.randint(1, 125)],
+                       [random.randint(1, 125), random.randint(1, 125)]]]
 
     control_points = torch.Tensor(control_points)
     curve_weights = torch.ones(control_points.size(0), 4, 1)
 
     control_points = torch.cat((control_points, curve_weights), axis=-1)
 
+    # print("controlpoints size:", control_points.size())
+
     curve_layer = CurveEval(4, dimension=2, p=3, out_dim=250, dvc='cpu')
 
     pc = curve_layer(control_points).detach()
 
-    im = torch.zeros((128, 128), dtype=torch.uint8)
+    # print("pc size:", pc.size())
 
+    im = torch.zeros((128, 128), dtype=torch.uint8)
+    #
     pixels = pc.round().int()
     for p in pixels:
         for y, x in p:

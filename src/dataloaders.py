@@ -39,9 +39,10 @@ class CustomDataset(Dataset):
         if self.true_targets:
             x_len, y_len = image[0].size()
             target = torch.load(self.img_dir + f"{idx}_point_cloud.pt")
-            target = target.flatten(start_dim=0, end_dim=1)
-            target[:, 0] = (target[:, 0] / x_len)
-            target[:, 1] = (target[:, 1] / y_len)
+            # print("target size:", target.size())
+            # print("target[:, 0] size:", target[:, :, 0].size())
+            target[:, :, 0] = (target[:, :, 0] / x_len)
+            target[:, :, 1] = (target[:, :, 1] / y_len)
             target = target
         else:
             target = self.target_transform(image)

@@ -22,7 +22,7 @@ class VectorizationLoss(nn.Module):
             distance_costs = []
             # For every target spline
             for t in target[i]:
-                # Calculate losses from predicted splines to target spline
+                # Calculate losses from predicted splines to that target spline
                 repeated_target = t.unsqueeze(0).repeat(n_splines_out, 1, 1)
                 if self.loss == 'chamfer':
                     distance_cost, _ = chamfer_distance(out[i], repeated_target, batch_reduction=None, point_reduction='mean')
@@ -44,11 +44,11 @@ class VectorizationLoss(nn.Module):
             distance_cost_matrix = torch.cat(distance_costs, 1)
 
             # find optimal bipartite matching
-            total_cost_matrix = distance_cost_matrix + cp_cost_matrix
-            row_ind, col_ind = linear_sum_assignment(total_cost_matrix.detach().cpu())
+            # total_cost_matrix = distance_cost_matrix + distance_cost_matrix
+            row_ind, col_ind = linear_sum_assignment(cp_cost_matrix.detach().cpu())
 
             # Sum losses of each matching
             batch_cp_losses.append(cp_cost_matrix[row_ind, col_ind].sum())
             batch_distance_losses.append(distance_cost_matrix[row_ind, col_ind].sum())
-        # Return all losses in a batch.
+        # Mean losses across batch
         return torch.stack(batch_distance_losses), torch.stack(batch_cp_losses)

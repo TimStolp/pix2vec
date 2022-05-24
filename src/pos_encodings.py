@@ -6,14 +6,14 @@ import math
 class PositionalEncoding(nn.Module):
 
     def __init__(self, batch_size, y_dim, x_dim, feat_dim,
-                 temperature=10000, normalize=False, scale=None, device='cpu'):
+                 temperature=10000, normalize=False, scale=None):
         super().__init__()
 
         if scale is None:
             scale = 2 * math.pi
 
-        y_embed, x_embed = torch.meshgrid(torch.linspace(1, y_dim, y_dim, device=device),
-                                          torch.linspace(1, x_dim, x_dim, device=device))
+        y_embed, x_embed = torch.meshgrid(torch.linspace(1, y_dim, y_dim),
+                                          torch.linspace(1, x_dim, x_dim))
 
         y_embed = y_embed.expand(batch_size, y_dim, x_dim)
         x_embed = x_embed.expand(batch_size, y_dim, x_dim)
@@ -27,7 +27,7 @@ class PositionalEncoding(nn.Module):
 
         # print("normalized x_meshgrid:", x_embed[0])
 
-        dim_t = torch.arange(feat_dim, device=device)
+        dim_t = torch.arange(feat_dim)
         dim_t = temperature ** (2 * torch.div(dim_t, 2, rounding_mode='floor') / feat_dim)
 
         # print("dim_t:", dim_t)
@@ -43,7 +43,7 @@ class PositionalEncoding(nn.Module):
 
         # print("stacked pos_x size:", pos_x.size())
 
-        self.pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
+        self.register_buffer('pos', torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2))
 
         # print("pos size:", self.pos.size())
 
@@ -54,13 +54,11 @@ class PositionalEncoding(nn.Module):
 class PositionalEmbedding(nn.Module):
     def __init__(self, n_controlpoints, d_model=256):
         super().__init__()
-        self.embed = nn.Embedding(50, d_model)
-        self.n_controlpoints = n_controlpoints
-        self.pos = torch.linspace(0, 1, n_controlpoints).repeat(d_model, 1).T
+        self.embed = nn.Embedding(n_controlpoints, d_model)
+        self.register_buffer('pos', torch.linspace(0, 1, n_controlpoints).repeat(d_model, 1).T)
 
     def forward(self, x):
-        b, hw, c = x.size()
+        b, _, _ = x.size()
 
-        i = torch.arange(self.n_controlpoints, device=x.device)
-        tgt = (self.embed(i) + self.pos.to(x.device)).repeat(b, 1, 1)
+        tgt = (self.embed.weight + self.pos).repeat(b, 1, 1)
         return tgt

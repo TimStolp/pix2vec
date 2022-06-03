@@ -6,12 +6,12 @@ import random
 
 
 canvas_size = 128
-n_curves = 1
+n_curves = 2
 randomness = 30
-
+number_of_examples = 10000
 
 curve_layer = CurveEval(4, dimension=2, p=3, out_dim=250, dvc='cpu')
-for i in range(100000):
+for i in range(number_of_examples):
     name = f'random_{n_curves}_curves_{i}'
     control_points = []
     for n in range(n_curves):

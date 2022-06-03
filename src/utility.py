@@ -3,16 +3,20 @@ from numpy import frombuffer
 from torch import from_numpy
 
 
-def plot_output_to_images(test_im, test_target, test_out, test_control_points):
+def plot_output_to_images(im, target, out, control_points, spline_logits):
     plots = []
-    for b in range(len(test_im)):
+
+    for b in range(len(im)):
+
+        indices = spline_logits[b, :, 0] > spline_logits[b, :, 1]
+
         fig = plt.figure(figsize=(5, 5))
-        plt.imshow(test_im[b][0], extent=[0, 1, 1, 0], cmap='gray')
-        for tt in test_target[b]:
+        plt.imshow(im[b][0], extent=[0, 1, 1, 0], cmap='gray')
+        for tt in target[b]:
             plt.scatter(tt[:, 1], tt[:, 0], color='green')
-        for to in test_out[b]:
+        for to in out[b, indices]:
             plt.scatter(to[:, 1], to[:, 0], color='blue')
-        for tcp in test_control_points[b]:
+        for tcp in control_points[b, indices]:
             plt.scatter(tcp[:, 1], tcp[:, 0], color='red')
 
         plt.axis('off')

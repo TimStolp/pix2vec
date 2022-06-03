@@ -59,14 +59,25 @@ class Net(nn.Module):
 
         # Encoder after transformer
         self.feature_encoder = nn.Sequential(
-            nn.Linear(channels[-1], (channels[-1] + n_controlpoints * 2) // 2),
+            nn.Linear(channels[-1], channels[-1]),
             nn.ReLU(),
-            nn.Linear((channels[-1] + n_controlpoints * 2) // 2, n_controlpoints * 2)
+            nn.Linear(channels[-1], channels[-1]),
+            nn.ReLU(),
+            nn.Linear(channels[-1], n_controlpoints * 2)
+        )
+
+        self.probability_encoder = nn.Sequential(
+            nn.Linear(channels[-1], channels[-1]),
+            nn.ReLU(),
+            nn.Linear(channels[-1], 2),
+            nn.LogSoftmax(dim=-1)
         )
 
         # NURBSDiff curve evaluation module.
         self.register_buffer('curve_weights', torch.ones(n_splines, self.n_controlpoints, 1))
         self.curve_layer = CurveEval(n_controlpoints, dimension=2, p=3, out_dim=n_eval_points)
+
+        self.ctr = 0
 
     def forward(self, x):
         # print('x_size: ', x.size())
@@ -74,20 +85,27 @@ class Net(nn.Module):
         cnn_out = self.cnn(x)
         # print('cnn_out_size: ', cnn_out.size())
 
+
         pe_out = self.pos_encoder(cnn_out).flatten(2, -1).transpose(1, 2)
         # print('pe_out_size: ', pe_out.size())
 
         memory = self.transformer_encoder(pe_out)
         # print('memory_size: ', memory.size())
 
+
         tgt = self.pos_embeder(memory)
         # print('tgt_size: ', tgt.size())
+
 
         transformer_out = self.transformer_decoder(tgt, memory)
         # print('transformer_out_size: ', transformer_out.size())
 
+
         control_points = self.feature_encoder(transformer_out)
         # print('control_points_size: ', control_points.size())
+
+        spline_logits = self.probability_encoder(transformer_out)
+        # print('spline_logits_size: ', spline_logits.size())
 
         out_list = []
         cp_list = []
@@ -100,5 +118,18 @@ class Net(nn.Module):
 
         control_points = torch.stack(cp_list, dim=0)
         out = torch.stack(out_list, dim=0)
+        # print('out_size: ', out.size())
 
-        return out, control_points
+
+        # if not self.ctr or self.ctr % 100 == 99:
+        #     # print("cnn_out", cnn_out.flatten(2, -1))
+        #     # print("pe_out", pe_out)
+        #     # print("memory", memory)
+        #     # print("tgt", tgt)
+        #     # print("transformer_out", transformer_out)
+        #     # print("controlpoints", control_points)
+        #     # print("spline logits", spline_logits)
+        # self.ctr += 1
+
+
+        return out, control_points, spline_logits

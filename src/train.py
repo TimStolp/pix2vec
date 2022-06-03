@@ -20,25 +20,29 @@ warnings.filterwarnings("error")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-def val_loop(nett, valloaderr, loss_func):
+def val_loop(nett, valloaderr, loss_func, cp_weight):
     # Calculate validation losses.
     val_total_loss_accumulator = 0
     val_distance_loss_accumulator = 0
     val_cp_loss_accumulator = 0
+    val_class_loss_accumulator = 0
     with torch.no_grad():
         for val_im, val_target in valloaderr:
-            val_out, val_control_points = nett(val_im)
+            val_out, val_control_points, val_spline_logits = nett(val_im)
 
-            val_distance_loss, val_cp_loss = loss_func(val_out, val_target.to(val_out.device), val_control_points)
-            val_total_loss = (val_distance_loss + val_cp_loss).mean()
+            val_total_loss, val_distance_loss, val_cp_loss, val_class_loss = loss_func(val_out, val_target.to(val_out.device),
+                                                       val_control_points, val_spline_logits, cp_weight)
+            val_total_loss = val_total_loss.mean()
             val_distance_loss = val_distance_loss.mean()
             val_cp_loss = val_cp_loss.mean()
+            val_class_loss = val_class_loss.mean()
 
             val_total_loss_accumulator += val_total_loss.item()
             val_distance_loss_accumulator += val_distance_loss.item()
             val_cp_loss_accumulator += val_cp_loss.item()
+            val_class_loss_accumulator += val_class_loss.item()
 
-    return val_total_loss_accumulator, val_distance_loss_accumulator, val_cp_loss_accumulator
+    return val_total_loss_accumulator, val_distance_loss_accumulator, val_cp_loss_accumulator, val_class_loss_accumulator
 
 
 def setup(rank, world_size):
@@ -124,6 +128,7 @@ def train(rank, world_size, batch_size, data_len,
     running_total_loss = 0
     running_distance_loss = 0
     running_cp_loss = 0
+    running_class_loss = 0
     for epoch in tqdm(range(epochs)):
         trainloader.sampler.set_epoch(epoch)
 
@@ -131,15 +136,16 @@ def train(rank, world_size, batch_size, data_len,
             # print('im_size: ', im.size())
             # print('target_size: ', target.size())
 
-            out, control_points = net(im)
+            out, control_points, spline_logits = net(im)
 
             # print('out_size: ', out.size())
             # print('control_points_out_size: ', control_points.size())
 
-            distance_loss, cp_loss = loss_func(out, target.to(out.device), control_points, cp_weight)
-            total_loss = (distance_loss + cp_loss).mean()
+            total_loss, distance_loss, cp_loss, class_loss = loss_func(out, target.to(out.device), control_points, spline_logits, cp_weight)
+            total_loss = total_loss.mean()
             distance_loss = distance_loss.mean()
             cp_loss = cp_loss.mean()
+            class_loss = class_loss.mean()
 
             optimizer.zero_grad()
 
@@ -151,22 +157,26 @@ def train(rank, world_size, batch_size, data_len,
             running_total_loss += total_loss.item()
             running_distance_loss += distance_loss.item()
             running_cp_loss += cp_loss.item()
+            running_class_loss += class_loss.item()
 
             # Create plot every n training steps.
             if i % ceil(100 / batch_size) == ceil(100 / batch_size) - 1:
                 writer.add_scalar('training_total_loss', running_total_loss / ceil(100 / batch_size), i * batch_size)
                 writer.add_scalar('training_distance_loss', running_distance_loss / ceil(100 / batch_size), i * batch_size)
                 writer.add_scalar('training_cp_loss', running_cp_loss / ceil(100 / batch_size), i * batch_size)
+                writer.add_scalar('training_class_loss', running_class_loss / ceil(100 / batch_size), i * batch_size)
                 running_total_loss = 0
                 running_distance_loss = 0
                 running_cp_loss = 0
+                running_class_loss = 0
 
             if i % ceil(1000 / batch_size) == ceil(1000 / batch_size) - 1:
                 net.eval()
-                val_total_loss, val_distance_loss, val_cp_loss = val_loop(net, valloader, loss_func)
+                val_total_loss, val_distance_loss, val_cp_loss, val_class_loss = val_loop(net, valloader, loss_func, cp_weight)
                 writer.add_scalar('validation_total_loss', val_total_loss / len(valloader), i * batch_size)
                 writer.add_scalar('validation_distance_loss', val_distance_loss / len(valloader), i * batch_size)
                 writer.add_scalar('validation_cp_loss', val_cp_loss / len(valloader), i * batch_size)
+                writer.add_scalar('validation_class_loss', val_class_loss / len(valloader), i * batch_size)
                 writer.add_scalar('cp_weight', cp_weight, i * batch_size)
                 writer.add_scalar('learning_rate', scheduler.get_last_lr()[-1], i * batch_size)
                 net.train()
@@ -176,27 +186,29 @@ def train(rank, world_size, batch_size, data_len,
                     cp_weight = cp_weight * 0.99
             i += 1
 
-        # if epoch % 10 == 9:
-        if epoch:
+        if epoch % 10 == 9:
+        # if epoch:
             with torch.no_grad():
                 net.eval()
                 test_plots = []
                 for batch, (test_im, test_target) in enumerate(testloader):
-                    test_out, test_control_points = net(test_im)
+                    test_out, test_control_points, test_spline_logits = net(test_im)
 
                     test_out = test_out.cpu()
                     test_control_points = test_control_points.cpu()
+                    test_spline_logits = test_spline_logits.cpu()
                     test_im = test_im.cpu()
                     test_target = test_target.cpu()
 
-                    test_plot = plot_output_to_images(test_im, test_target, test_out, test_control_points)
+                    test_plot = plot_output_to_images(test_im, test_target, test_out, test_control_points, test_spline_logits)
                     test_plots += test_plot
 
                 test_grid = make_grid(test_plots, nrow=int(len(test_plots) ** 0.5))
                 writer.add_image('test_images', test_grid, i * batch_size)
 
                 train_plots = plot_output_to_images(im[:25].cpu(), target[:25].cpu(), out[:25].detach().cpu(),
-                                                    control_points[:25].detach().cpu())
+                                                    control_points[:25].detach().cpu(), spline_logits[:25].detach().cpu())
+
                 train_grid = make_grid(train_plots, nrow=int(len(train_plots) ** 0.5))
                 writer.add_image('train_images', train_grid, i * batch_size)
 
@@ -208,18 +220,18 @@ def train(rank, world_size, batch_size, data_len,
 
 if __name__ == "__main__":
     batch_size = 32
-    data_len = 100000
+    data_len = 1000
     n_controlpoints = 4
-    n_target_splines = 1
-    n_predicted_splines = 1
+    n_target_splines = 2
+    n_predicted_splines = 10
     epochs = 100
     lr = 1e-4
-    dropout = 0.01
+    dropout = 0.0
     scheduler_step_size = ceil(1000 / batch_size)
     scheduler_gamma = 0.99
     cp_weight = 1
     loss_type = "sinkhorn"
-    summary_writer_directory = 'runs/resnet_backbone_bs32_gpu8_100kdata_bigger_network2'
+    summary_writer_directory = 'runs/temp'
     # summary_writer_directory = 'runs/temp'
 
     # Create dataloaders.

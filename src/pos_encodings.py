@@ -52,13 +52,12 @@ class PositionalEncoding(nn.Module):
 
 
 class PositionalEmbedding(nn.Module):
-    def __init__(self, n_controlpoints, d_model=256):
+    def __init__(self, n_splines, d_model=256):
         super().__init__()
-        self.embed = nn.Embedding(n_controlpoints, d_model)
-        self.register_buffer('pos', torch.linspace(0, 1, n_controlpoints).repeat(d_model, 1).T)
+        self.embed = nn.Embedding(n_splines, d_model)
 
     def forward(self, x):
         b, _, _ = x.size()
 
-        tgt = (self.embed.weight + self.pos).repeat(b, 1, 1)
+        tgt = self.embed.weight.repeat(b, 1, 1)
         return tgt

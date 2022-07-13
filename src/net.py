@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 from NURBSDiff.curve_eval import CurveEval
-from cnn import Bottleneck, BasicBlock
 from pos_encodings import PositionalEmbedding, PositionalEncoding
 from resnet import resnet18
+from detr.models.backbone import build_backbone
+from detr.models.transformer import build_transformer
 
 
 class Net(nn.Module):
@@ -21,7 +22,7 @@ class Net(nn.Module):
         super().__init__()
         if channels is None:
             # channels = [1, 64, 128, 256]
-            channels = [1, 64, 256, 512]
+            channels = [3, 64, 256, 512]
 
         self.n_controlpoints = n_controlpoints
         self.n_splines = n_splines
@@ -30,19 +31,8 @@ class Net(nn.Module):
         # Resnet18 CNN
         self.cnn = resnet18()
 
-        # Custom CNN
-        # self.cnn = nn.Sequential(
-        #     nn.Conv2d(channels[0], channels[1], kernel_size=7, stride=2, padding=3, bias=False),
-        #     nn.BatchNorm2d(channels[1]),
-        #     nn.ReLU(inplace=True),
-        #     nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-        #     BasicBlock(channels[1], channels[2]),
-        #     BasicBlock(channels[2], channels[3])
-        #     # nn.AdaptiveAvgPool2d((n_controlpoints, n_controlpoints))
-        # )
-
         # Positional encoding
-        self.pos_encoder = PositionalEncoding(batch_size, 4, 4,
+        self.pos_encoder = PositionalEncoding(batch_size, 16, 16,
                                               feat_dim=channels[-1] / 2, normalize=True)
 
         self.pos_embeder = PositionalEmbedding(n_splines, d_model=channels[-1])
@@ -69,15 +59,12 @@ class Net(nn.Module):
         self.probability_encoder = nn.Sequential(
             nn.Linear(channels[-1], channels[-1]),
             nn.ReLU(),
-            nn.Linear(channels[-1], 2),
-            nn.LogSoftmax(dim=-1)
+            nn.Linear(channels[-1], 2)
         )
 
         # NURBSDiff curve evaluation module.
         self.register_buffer('curve_weights', torch.ones(n_splines, self.n_controlpoints, 1))
         self.curve_layer = CurveEval(n_controlpoints, dimension=2, p=3, out_dim=n_eval_points)
-
-        self.ctr = 0
 
     def forward(self, x):
         # print('x_size: ', x.size())
@@ -119,17 +106,5 @@ class Net(nn.Module):
         control_points = torch.stack(cp_list, dim=0)
         out = torch.stack(out_list, dim=0)
         # print('out_size: ', out.size())
-
-
-        # if not self.ctr or self.ctr % 100 == 99:
-        #     # print("cnn_out", cnn_out.flatten(2, -1))
-        #     # print("pe_out", pe_out)
-        #     # print("memory", memory)
-        #     # print("tgt", tgt)
-        #     # print("transformer_out", transformer_out)
-        #     # print("controlpoints", control_points)
-        #     # print("spline logits", spline_logits)
-        # self.ctr += 1
-
 
         return out, control_points, spline_logits

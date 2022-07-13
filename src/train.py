@@ -20,7 +20,7 @@ warnings.filterwarnings("error")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-def val_loop(nett, valloaderr, loss_func, cp_weight):
+def val_loop(nett, valloaderr, loss_func):
     # Calculate validation losses.
     val_total_loss_accumulator = 0
     val_distance_loss_accumulator = 0
@@ -31,7 +31,7 @@ def val_loop(nett, valloaderr, loss_func, cp_weight):
             val_out, val_control_points, val_spline_logits = nett(val_im)
 
             val_total_loss, val_distance_loss, val_cp_loss, val_class_loss = loss_func(val_out, val_target.to(val_out.device),
-                                                       val_control_points, val_spline_logits, cp_weight)
+                                                       val_control_points, val_spline_logits)
             val_total_loss = val_total_loss.mean()
             val_distance_loss = val_distance_loss.mean()
             val_cp_loss = val_cp_loss.mean()
@@ -54,16 +54,16 @@ def setup(rank, world_size):
 
 def prepare_dataloaders(rank, world_size, data_len, n_target_splines, batch_size):
     # Create dataloaders with distributed processing in mind.
-    dataset = CustomDataset(f'/media/scratch1/stolpt/custom_data/random_{n_target_splines}_curves_',
+    dataset = CustomDataset(f'/media/scratch1/stolpt/custom_data/random_{n_target_splines}_curves_bbox_',
                             data_len=data_len, true_targets=True)
     train_set, val_set, test_set = torch.utils.data.random_split(dataset, [int(data_len * 0.80),
                                                                            data_len - int(data_len * 0.80) - 25, 25])
 
     train_sampler = DistributedSampler(train_set, num_replicas=world_size, rank=rank, shuffle=True)
-    test_sampler = DistributedSampler(val_set, num_replicas=world_size, rank=rank, shuffle=False)
+    val_sampler = DistributedSampler(val_set, num_replicas=world_size, rank=rank, shuffle=False)
 
     trainloader = DataLoader(train_set, batch_size=batch_size // world_size, sampler=train_sampler)
-    valloader = DataLoader(val_set, batch_size=batch_size // world_size, sampler=test_sampler)
+    valloader = DataLoader(val_set, batch_size=batch_size // world_size, sampler=val_sampler)
     testloader = DataLoader(test_set, batch_size=batch_size)
 
     return trainloader, valloader, testloader
@@ -84,7 +84,7 @@ def set_seeds(seed):
 def train(rank, world_size, batch_size, data_len,
           n_controlpoints, n_target_splines, n_predicted_splines,
           epochs, lr, dropout, scheduler_step_size, scheduler_gamma,
-          cp_weight, loss_type, summary_writer_directory):
+          weights, loss_type, summary_writer_directory):
 
     # Seeding for reproducibility
     set_seeds(0)
@@ -117,7 +117,7 @@ def train(rank, world_size, batch_size, data_len,
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
 
     # Define loss function
-    loss_func = VectorizationLoss(loss=loss_type)
+    loss_func = VectorizationLoss(weights, loss=loss_type)
 
     # Define logger
     writer = SummaryWriter(summary_writer_directory)
@@ -141,7 +141,10 @@ def train(rank, world_size, batch_size, data_len,
             # print('out_size: ', out.size())
             # print('control_points_out_size: ', control_points.size())
 
-            total_loss, distance_loss, cp_loss, class_loss = loss_func(out, target.to(out.device), control_points, spline_logits, cp_weight)
+            total_loss, distance_loss, cp_loss, class_loss = loss_func(out, target.to(out.device), control_points, spline_logits)
+
+            # print("total_loss_size", total_loss.size())
+
             total_loss = total_loss.mean()
             distance_loss = distance_loss.mean()
             cp_loss = cp_loss.mean()
@@ -172,22 +175,18 @@ def train(rank, world_size, batch_size, data_len,
 
             if i % ceil(1000 / batch_size) == ceil(1000 / batch_size) - 1:
                 net.eval()
-                val_total_loss, val_distance_loss, val_cp_loss, val_class_loss = val_loop(net, valloader, loss_func, cp_weight)
+                val_total_loss, val_distance_loss, val_cp_loss, val_class_loss = val_loop(net, valloader, loss_func)
                 writer.add_scalar('validation_total_loss', val_total_loss / len(valloader), i * batch_size)
                 writer.add_scalar('validation_distance_loss', val_distance_loss / len(valloader), i * batch_size)
                 writer.add_scalar('validation_cp_loss', val_cp_loss / len(valloader), i * batch_size)
                 writer.add_scalar('validation_class_loss', val_class_loss / len(valloader), i * batch_size)
-                writer.add_scalar('cp_weight', cp_weight, i * batch_size)
                 writer.add_scalar('learning_rate', scheduler.get_last_lr()[-1], i * batch_size)
                 net.train()
 
-            if cp_weight > 0.1:
-                if i % ceil(1000 / batch_size) == ceil(1000 / batch_size) - 1:
-                    cp_weight = cp_weight * 0.99
             i += 1
 
-        if epoch % 10 == 9:
-        # if epoch:
+        # if epoch % 10 == 9:
+        if epoch:
             with torch.no_grad():
                 net.eval()
                 test_plots = []
@@ -222,20 +221,16 @@ if __name__ == "__main__":
     batch_size = 32
     data_len = 1000
     n_controlpoints = 4
-    n_target_splines = 2
+    n_target_splines = 1
     n_predicted_splines = 10
     epochs = 100
     lr = 1e-4
     dropout = 0.0
     scheduler_step_size = ceil(1000 / batch_size)
     scheduler_gamma = 0.99
-    cp_weight = 1
+    weights = {'cp_weight': 2, 'distance_weight': 5, 'class_weight': 1, 'no_obj_weight': 0.1}
     loss_type = "sinkhorn"
-    summary_writer_directory = 'runs/temp'
-    # summary_writer_directory = 'runs/temp'
-
-    # Create dataloaders.
-    # dataloader = MNISTDataset('../../datasets_external/mnist', transform=transform, target_transform=im2pc)
+    summary_writer_directory = 'runs/new_data_2'
 
     print("cuda:", torch.version.cuda)
     print("nccl:", torch.cuda.nccl.version())
@@ -243,7 +238,7 @@ if __name__ == "__main__":
     world_size = torch.cuda.device_count()
     print(f"Using {world_size} GPU(s).")
     arguments = (world_size, batch_size, data_len, n_controlpoints, n_target_splines, n_predicted_splines, epochs, lr,
-                 dropout, scheduler_step_size, scheduler_gamma, cp_weight, loss_type, summary_writer_directory)
+                 dropout, scheduler_step_size, scheduler_gamma, weights, loss_type, summary_writer_directory)
 
     mp.spawn(train,
              args=arguments,

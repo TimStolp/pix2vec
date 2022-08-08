@@ -19,6 +19,8 @@ from .transformer import build_transformer
 
 from NURBSDiff.curve_eval import CurveEval
 import geomloss
+import matplotlib
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 
 
@@ -553,15 +555,17 @@ class SetCriterionLines(nn.Module):
         # print("target_points size", tgt_points.size())
 
         src_controlpoints_zero_one = src_controlpoints[:, [0, -1], :].flatten(1, 2)
-        src_controlpoints_one_zero = src_controlpoints[:, [-1, 0], :].flatten(1, 2)
+        # src_controlpoints_one_zero = src_controlpoints[:, [-1, 0], :].flatten(1, 2)
         tgt_points = tgt_points[:, [0, -1], :].flatten(1, 2)
 
         # print("out_controlpoints after size", src_controlpoints_zero_one.size())
         # print("tgt_points after size", tgt_points.size())
 
         cost_endpoint_zero_one = F.pairwise_distance(src_controlpoints_zero_one, tgt_points)
-        cost_endpoint_one_zero = F.pairwise_distance(src_controlpoints_one_zero, tgt_points)
-        cost_endpoint = torch.min(cost_endpoint_zero_one, cost_endpoint_one_zero)
+        # cost_endpoint_one_zero = F.pairwise_distance(src_controlpoints_one_zero, tgt_points)
+
+        # cost_endpoint = torch.min(cost_endpoint_zero_one, cost_endpoint_one_zero)
+        cost_endpoint = cost_endpoint_zero_one
 
         # print("cost_endpoint size", cost_endpoint.size())
 

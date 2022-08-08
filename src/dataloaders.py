@@ -9,6 +9,8 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from scipy import interpolate
+import matplotlib
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 
 
@@ -75,8 +77,7 @@ class BboxDataset(Dataset):
 
 
 class TuSimpleDataset(Dataset):
-    def __init__(self, data_dir, json_files, random_transf=False):
-        self.random_transf = random_transf
+    def __init__(self, data_dir, json_files, args):
         self.data_dir = data_dir
         self.transform = transforms.Compose([transforms.ToTensor(),
                                              transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -94,6 +95,14 @@ class TuSimpleDataset(Dataset):
                 if len(lane['h_samples']) > self.max_len:
                     self.max_len = len(lane['h_samples'])
                 self.lanes.append(json.loads(line))
+
+        self.transforms = []
+        if args.crop:
+            self.transforms.append('crop')
+        if args.flip:
+            self.transforms.append('h_flip')
+        if args.affine:
+            self.transforms.append('affine')
 
     def __len__(self):
         return len(self.lanes)
@@ -113,8 +122,8 @@ class TuSimpleDataset(Dataset):
         # oldim = im.clone()
         # oldtarget = [buh.clone() for buh in target]
 
-        if self.random_transf:
-            im, target = random_transform(im, target)
+        if len(self.transforms) > 0:
+            im, target = random_transform(im, target, self.transforms)
 
         _, h, w = im.size()
 
@@ -151,11 +160,11 @@ class TuSimpleDataset(Dataset):
         return im, target
 
 
-def random_transform(im, target):
-    transform_dict = {'crop': MyCrop(), 'h_flip': MyHorizontalFlip(1),
-                      'affine': MyAffine(10, (0.10, 0.10), (1, 1))}
+def random_transform(im, target, transforms):
+    transform_dict = {'crop': MyCrop(), 'h_flip': MyHorizontalFlip(0.5),
+                      'affine': MyAffine(10, (0.10, 0.10), (0.8, 1.2))}
 
-    t = random.choice(list(transform_dict.keys()))
+    t = random.choice(transforms)
 
     transformed_im, transformed_target = transform_dict[t](im, target)
 
@@ -188,15 +197,20 @@ class MyVerticalFlip(nn.Module):
 
     def __init__(self, p):
         super().__init__()
-        self.flip = transforms.RandomVerticalFlip(p)
+        self.p = p
+        self.flip = transforms.RandomVerticalFlip(1)
 
     def forward(self, im, target):
-        transformed_im = self.flip(im)
-        transformed_target = []
-        for lane in target:
-            lane[:, 0] -= im.size(1)
-            lane[:, 0] *= -1
-            transformed_target.append(lane)
+        if random.random() < self.p:
+            transformed_im = self.flip(im)
+            transformed_target = []
+            for lane in target:
+                lane[:, 0] -= im.size(1)
+                lane[:, 0] *= -1
+                transformed_target.append(lane)
+        else:
+            transformed_im = im
+            transformed_target = target
 
         return transformed_im, transformed_target
 
@@ -205,15 +219,20 @@ class MyHorizontalFlip(nn.Module):
 
     def __init__(self, p):
         super().__init__()
-        self.flip = transforms.RandomHorizontalFlip(p)
+        self.p = p
+        self.flip = transforms.RandomHorizontalFlip(1)
 
     def forward(self, im, target):
-        transformed_im = self.flip(im)
-        transformed_target = []
-        for lane in target:
-            lane[:, 1] -= im.size(2)
-            lane[:, 1] *= -1
-            transformed_target.append(lane)
+        if random.random() < self.p:
+            transformed_im = self.flip(im)
+            transformed_target = []
+            for lane in target:
+                lane[:, 1] -= im.size(2)
+                lane[:, 1] *= -1
+                transformed_target.append(lane)
+        else:
+            transformed_im = im
+            transformed_target = target
 
         return transformed_im, transformed_target
 

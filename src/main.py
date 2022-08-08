@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
 import torch.distributed as dist
+import matplotlib
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
@@ -24,7 +26,7 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=10000, type=int)
+    parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--lr_drop', default=10, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
@@ -40,7 +42,7 @@ def get_args_parser():
                         help="Disables auxiliary decoding losses (loss at each layer)")
     # * Loss coefficients
     parser.add_argument('--endpoint_weight', default=1, type=float)
-    parser.add_argument('--distance_weight', default=2, type=float)
+    parser.add_argument('--distance_weight', default=1, type=float)
     parser.add_argument('--class_weight', default=1, type=float)
     parser.add_argument('--no_obj_weight', default=0.1, type=float)
 
@@ -62,6 +64,17 @@ def get_args_parser():
     parser.add_argument('--num_controlpoints', default=4, type=int,
                         help="Number of controlpoints per predicted line")
     parser.add_argument('--pre_norm', action='store_true')
+
+    # * Dataloader
+    parser.add_argument('--crop', action='store_true')
+    parser.add_argument('--flip', action='store_true')
+    parser.add_argument('--affine', action='store_true')
+
+    # * Logging
+    parser.add_argument('--log_dir', default='runs/temp', type=str,
+                        help="Name of the logging directory for tensorboard.")
+    parser.add_argument('--save_model_dir', default='trained_models/temp', type=str,
+                        help="Name of the logging directory to save the model after training")
 
     # * Segmentation
     parser.add_argument('--masks', action='store_true',
@@ -111,11 +124,10 @@ def train(rank, world_size, args):
     # TEMP ARGUMENTS #
     n_target_splines = 2
     data_len = 100
-    summary_writer_directory = 'runs/DETRLines_tusimple_overfit2'
     ##################
 
     # Logging setup
-    writer = SummaryWriter(summary_writer_directory)
+    writer = SummaryWriter(args.log_dir)
 
     # Distributed setup
     setup(rank, world_size)
@@ -130,10 +142,12 @@ def train(rank, world_size, args):
     # Dataloaders setup
     # dataset = CustomDataset(f'/media/scratch1/stolpt/custom_data/random_{n_target_splines}_curves_bbox_',
     #                         data_len=data_len)
-    # dataset = TuSimpleDataset('/media/scratch1/stolpt/tusimple/train/', ['label_data_0313.json',
-    #                                                                      'label_data_0531.json',
-    #                                                                      'label_data_0601.json'])
-    dataset = TuSimpleDataset('/media/scratch1/stolpt/tusimple/train/', ['label_data_0313.json'], random_transf=False)
+    dataset = TuSimpleDataset('/media/scratch1/stolpt/tusimple/train/',
+                              ['label_data_0313.json',
+                               'label_data_0531.json',
+                               'label_data_0601.json'],
+                              args)
+    # dataset = TuSimpleDataset('/media/scratch1/stolpt/tusimple/train/', ['label_data_0313.json'], args)
 
     # Get train/val/test split
     train_set, val_set, test_set = torch.utils.data.random_split(dataset, [int(len(dataset) * 0.9),
@@ -222,7 +236,7 @@ def train(rank, world_size, args):
 
         # Logging and plotting
         # if True:
-        if epoch % 50 == 49:
+        if epoch % 5 == 4:
             with torch.no_grad():
                 model.eval()
                 # Plot train images
@@ -254,6 +268,9 @@ def train(rank, world_size, args):
                 model.train()
 
     if not rank:
+        print("Saving network")
+        torch.save(model.state_dict(), args.save_model_dir + '.pt')
+
         print("Done.")
     cleanup()
 
